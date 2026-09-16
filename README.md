@@ -4,6 +4,10 @@ This project gives you a simple way to export Microsoft 365 Copilot interaction 
 
 If you are new to PowerShell or Microsoft Graph, this guide walks you through the setup step by step.
 
+## REST API option
+
+The root-level script uses the Microsoft Graph PowerShell SDK. For a separate app-only implementation that calls the Graph REST API directly, see [rest-api/README.md](rest-api/README.md). The REST option defaults to Graph v1.0, supports client-credentials authentication, and requires `AiEnterpriseInteraction.Read.All` application permission with admin consent (plus `User.Read.All` only when enumerating all users).
+
 ## What this project does
 
 This script will:
