@@ -13,6 +13,10 @@ param(
     [string]$AppClassFilter,
     [datetime]$CreatedDateTimeStart,
     [datetime]$CreatedDateTimeEnd,
+    [switch]$IncludeCopilotStudio,
+    [string]$CopilotStudioEnvironmentUrl = $env:DATAVERSE_ENVIRONMENT_URL,
+    [string]$CopilotStudioAccessToken = $env:DATAVERSE_ACCESS_TOKEN,
+    [string]$CopilotStudioFilter,
     [switch]$IncludeRawJson
 )
 
@@ -61,7 +65,8 @@ function Get-AccessToken {
         [string]$SuppliedAccessToken,
         [string]$DirectoryTenantId,
         [string]$ApplicationId,
-        [string]$ApplicationSecret
+        [string]$ApplicationSecret,
+        [string]$Scope = 'https://graph.microsoft.com/.default'
     )
 
     if ($SuppliedAccessToken) {
@@ -79,7 +84,7 @@ function Get-AccessToken {
             -Body @{
                 client_id     = $ApplicationId
                 client_secret = $ApplicationSecret
-                scope         = 'https://graph.microsoft.com/.default'
+                scope         = $Scope
                 grant_type    = 'client_credentials'
             } `
             -ErrorAction Stop
@@ -93,6 +98,58 @@ function Get-AccessToken {
     }
 
     return $tokenResponse.access_token
+}
+
+function Get-ObjectPropertyValue {
+    param(
+        [object]$InputObject,
+        [string[]]$PropertyName
+    )
+
+    if ($null -eq $InputObject) {
+        return $null
+    }
+
+    foreach ($name in $PropertyName) {
+        if ($InputObject -is [System.Collections.IDictionary] -and $InputObject.Contains($name)) {
+            return $InputObject[$name]
+        }
+
+        $property = $InputObject.PSObject.Properties[$name]
+        if ($property) {
+            return $property.Value
+        }
+    }
+
+    return $null
+}
+
+function ConvertTo-CompressedJsonOrNull {
+    param(
+        [object]$InputObject,
+        [int]$Depth = 20
+    )
+
+    if ($null -eq $InputObject) {
+        return $null
+    }
+
+    return $InputObject | ConvertTo-Json -Depth $Depth -Compress
+}
+
+function ConvertFrom-JsonOrNull {
+    param([object]$Value)
+
+    if ($Value -isnot [string] -or [string]::IsNullOrWhiteSpace($Value)) {
+        return $null
+    }
+
+    try {
+        return $Value | ConvertFrom-Json -Depth 100 -ErrorAction Stop
+    }
+    catch {
+        return $null
+    }
 }
 
 function Get-GraphUser {
@@ -166,6 +223,159 @@ function Get-AIInteractionHistoryForUser {
     } while ($uri)
 }
 
+function Convert-CopilotStudioTranscriptToInteraction {
+    param(
+        [object]$Transcript,
+        [switch]$IncludeRawJson
+    )
+
+    $transcriptId = Get-ObjectPropertyValue -InputObject $Transcript -PropertyName @('conversationtranscriptid', 'id')
+    $createdOn = Get-ObjectPropertyValue -InputObject $Transcript -PropertyName @('createdon', 'createdDateTime', 'created')
+    $modifiedOn = Get-ObjectPropertyValue -InputObject $Transcript -PropertyName @('modifiedon', 'modifiedDateTime', 'modified')
+    $content = Get-ObjectPropertyValue -InputObject $Transcript -PropertyName @('content', 'transcript')
+    $metadata = Get-ObjectPropertyValue -InputObject $Transcript -PropertyName @('metadata')
+    $name = Get-ObjectPropertyValue -InputObject $Transcript -PropertyName @('name')
+    $parsedContent = ConvertFrom-JsonOrNull -Value $content
+    $parsedMetadata = ConvertFrom-JsonOrNull -Value $metadata
+    $metadataForExport = if ($parsedMetadata) { $parsedMetadata } else { $metadata }
+
+    $activities = @()
+    if ($parsedContent) {
+        $directActivities = Get-ObjectPropertyValue -InputObject $parsedContent -PropertyName @('activities')
+        $transcriptActivities = Get-ObjectPropertyValue -InputObject (Get-ObjectPropertyValue -InputObject $parsedContent -PropertyName @('transcript')) -PropertyName @('activities')
+        $valueActivities = Get-ObjectPropertyValue -InputObject $parsedContent -PropertyName @('value')
+
+        if ($directActivities) {
+            $activities = @($directActivities)
+        }
+        elseif ($transcriptActivities) {
+            $activities = @($transcriptActivities)
+        }
+        elseif ($valueActivities) {
+            $activities = @($valueActivities)
+        }
+        elseif ($parsedContent -is [System.Collections.IEnumerable] -and $parsedContent -isnot [string]) {
+            $activities = @($parsedContent)
+        }
+    }
+
+    if ($activities.Count -gt 0) {
+        foreach ($activity in $activities) {
+            $activityType = Get-ObjectPropertyValue -InputObject $activity -PropertyName @('type')
+            $text = Get-ObjectPropertyValue -InputObject $activity -PropertyName @('text', 'message', 'content')
+            if ($activityType -and $activityType -ne 'message' -and -not $text) {
+                continue
+            }
+
+            $from = Get-ObjectPropertyValue -InputObject $activity -PropertyName @('from')
+            $conversation = Get-ObjectPropertyValue -InputObject $activity -PropertyName @('conversation')
+            $activityId = Get-ObjectPropertyValue -InputObject $activity -PropertyName @('id')
+            $fromId = Get-ObjectPropertyValue -InputObject $from -PropertyName @('id')
+            $fromName = Get-ObjectPropertyValue -InputObject $from -PropertyName @('name')
+            $conversationId = Get-ObjectPropertyValue -InputObject $conversation -PropertyName @('id')
+            $timestamp = Get-ObjectPropertyValue -InputObject $activity -PropertyName @('timestamp', 'createdDateTime', 'created')
+            $attachments = Get-ObjectPropertyValue -InputObject $activity -PropertyName @('attachments')
+            $locale = Get-ObjectPropertyValue -InputObject $activity -PropertyName @('locale')
+
+            [pscustomobject]@{
+                UserId                = $fromId
+                UserPrincipalName     = $null
+                DisplayName           = $fromName
+                InteractionId         = if ($activityId) { $activityId } elseif ($transcriptId) { $transcriptId } else { [guid]::NewGuid().ToString() }
+                SessionId             = if ($conversationId) { $conversationId } else { $transcriptId }
+                RequestId             = $null
+                AppClass              = 'Copilot Studio'
+                InteractionType       = if ($activityType) { "copilotstudio.$activityType" } else { 'copilotstudio' }
+                ConversationType      = 'agent'
+                CreatedDateTime       = if ($timestamp) { $timestamp } elseif ($createdOn) { $createdOn } else { $modifiedOn }
+                Locale                = $locale
+                SourceApplication     = if ($name) { $name } else { 'Copilot Studio' }
+                ContentType           = 'text'
+                Content               = $text
+                Contexts              = ConvertTo-CompressedJsonOrNull -InputObject $metadataForExport -Depth 20
+                Attachments           = ConvertTo-CompressedJsonOrNull -InputObject $attachments -Depth 20
+                Mentions              = $null
+                Links                 = $null
+                RawJson               = if ($IncludeRawJson) { $activity | ConvertTo-Json -Depth 100 -Compress } else { $null }
+            }
+        }
+
+        return
+    }
+
+    [pscustomobject]@{
+        UserId                = $null
+        UserPrincipalName     = $null
+        DisplayName           = $null
+        InteractionId         = if ($transcriptId) { $transcriptId } else { [guid]::NewGuid().ToString() }
+        SessionId             = $transcriptId
+        RequestId             = $null
+        AppClass              = 'Copilot Studio'
+        InteractionType       = 'copilotstudio.transcript'
+        ConversationType      = 'agent'
+        CreatedDateTime       = if ($createdOn) { $createdOn } else { $modifiedOn }
+        Locale                = $null
+        SourceApplication     = if ($name) { $name } else { 'Copilot Studio' }
+        ContentType           = if ($parsedContent) { 'application/json' } else { 'text' }
+        Content               = $content
+        Contexts              = ConvertTo-CompressedJsonOrNull -InputObject $metadataForExport -Depth 20
+        Attachments           = $null
+        Mentions              = $null
+        Links                 = $null
+        RawJson               = if ($IncludeRawJson) { $Transcript | ConvertTo-Json -Depth 100 -Compress } else { $null }
+    }
+}
+
+function Get-CopilotStudioInteractionHistory {
+    param(
+        [string]$EnvironmentUrl,
+        [hashtable]$Headers,
+        [int]$PageSize,
+        [string]$Filter,
+        [datetime]$CreatedDateTimeStart,
+        [datetime]$CreatedDateTimeEnd,
+        [switch]$IncludeRawJson
+    )
+
+    $normalizedEnvironmentUrl = $EnvironmentUrl.TrimEnd('/')
+    $uri = "$normalizedEnvironmentUrl/api/data/v9.2/conversationtranscripts"
+    $query = @(
+        "`$select=conversationtranscriptid,createdon,modifiedon,name,content,metadata",
+        "`$orderby=createdon asc",
+        "`$top=$PageSize"
+    )
+    $filterParts = @()
+    if ($Filter) {
+        $filterParts += $Filter
+    }
+    if ($CreatedDateTimeStart) {
+        $start = $CreatedDateTimeStart.ToUniversalTime().ToString('o')
+        $end = $CreatedDateTimeEnd.ToUniversalTime().ToString('o')
+        $filterParts += "createdon ge $start and createdon le $end"
+    }
+    if ($filterParts.Count -gt 0) {
+        $query += "`$filter=$([System.Uri]::EscapeDataString(($filterParts -join ' and ')))"
+    }
+    $uri = "$uri?$($query -join '&')"
+
+    do {
+        try {
+            $response = Invoke-RestMethod -Method Get -Uri $uri -Headers $Headers -ErrorAction Stop
+        }
+        catch {
+            throw "Dataverse request for Copilot Studio transcripts failed: $(Get-GraphErrorMessage -ErrorRecord $_)"
+        }
+
+        if ($response.value) {
+            foreach ($transcript in $response.value) {
+                Convert-CopilotStudioTranscriptToInteraction -Transcript $transcript -IncludeRawJson:$IncludeRawJson
+            }
+        }
+
+        $uri = $response.'@odata.nextLink'
+    } while ($uri)
+}
+
 if ($CreatedDateTimeStart -and -not $CreatedDateTimeEnd) {
     throw 'CreatedDateTimeStart requires CreatedDateTimeEnd because Graph requires both createdDateTime filter boundaries.'
 }
@@ -178,12 +388,19 @@ if ($CreatedDateTimeStart -gt $CreatedDateTimeEnd) {
 if ($UserIds -and $AllUsers) {
     throw 'Specify either UserIds or AllUsers, not both.'
 }
-if (-not $UserIds -and -not $AllUsers) {
-    throw 'Specify one or more UserIds, or use -AllUsers to enumerate users.'
+if (-not $UserIds -and -not $AllUsers -and -not $IncludeCopilotStudio) {
+    throw 'Specify one or more UserIds, use -AllUsers to enumerate users, or use -IncludeCopilotStudio with -CopilotStudioEnvironmentUrl.'
+}
+if ($IncludeCopilotStudio -and -not $CopilotStudioEnvironmentUrl) {
+    throw 'IncludeCopilotStudio requires CopilotStudioEnvironmentUrl or the DATAVERSE_ENVIRONMENT_URL environment variable.'
 }
 
-$accessToken = Get-AccessToken -SuppliedAccessToken $AccessToken -DirectoryTenantId $TenantId -ApplicationId $ClientId -ApplicationSecret $ClientSecret
-$headers = @{ Authorization = ('Bearer ' + $accessToken) }
+$queryMicrosoft365Copilot = $UserIds -or $AllUsers
+$headers = $null
+if ($queryMicrosoft365Copilot) {
+    $accessToken = Get-AccessToken -SuppliedAccessToken $AccessToken -DirectoryTenantId $TenantId -ApplicationId $ClientId -ApplicationSecret $ClientSecret
+    $headers = @{ Authorization = ('Bearer ' + $accessToken) }
+}
 $version = if ($UseBeta) { 'beta' } else { 'v1.0' }
 
 $filterParts = @()
@@ -198,24 +415,40 @@ if ($CreatedDateTimeStart) {
 }
 $filter = $filterParts -join ' and '
 
-$users = if ($AllUsers) {
-    Write-Information 'Enumerating users through Microsoft Graph...' -InformationAction Continue
-    @(Get-GraphUser -Headers $headers)
-}
-else {
-    @($UserIds | ForEach-Object {
-        [pscustomobject]@{
-            Id                = $_
-            UserPrincipalName = $null
-            DisplayName       = $null
-        }
-    })
+$allInteractions = @()
+if ($queryMicrosoft365Copilot) {
+    $users = if ($AllUsers) {
+        Write-Information 'Enumerating users through Microsoft Graph...' -InformationAction Continue
+        @(Get-GraphUser -Headers $headers)
+    }
+    else {
+        @($UserIds | ForEach-Object {
+            [pscustomobject]@{
+                Id                = $_
+                UserPrincipalName = $null
+                DisplayName       = $null
+            }
+        })
+    }
+
+    foreach ($user in $users) {
+        Write-Verbose "Processing user: $($user.Id)"
+        $allInteractions += @(Get-AIInteractionHistoryForUser -User $user -Headers $headers -Version $version -PageSize $Top -Filter $filter -IncludeRawJson:$IncludeRawJson)
+    }
 }
 
-$allInteractions = @()
-foreach ($user in $users) {
-    Write-Verbose "Processing user: $($user.Id)"
-    $allInteractions += @(Get-AIInteractionHistoryForUser -User $user -Headers $headers -Version $version -PageSize $Top -Filter $filter -IncludeRawJson:$IncludeRawJson)
+if ($IncludeCopilotStudio) {
+    Write-Information 'Retrieving Copilot Studio transcripts from Dataverse...' -InformationAction Continue
+    $copilotStudioScope = "$($CopilotStudioEnvironmentUrl.TrimEnd('/'))/.default"
+    $copilotStudioToken = Get-AccessToken -SuppliedAccessToken $CopilotStudioAccessToken -DirectoryTenantId $TenantId -ApplicationId $ClientId -ApplicationSecret $ClientSecret -Scope $copilotStudioScope
+    $copilotStudioHeaders = @{
+        Authorization      = ('Bearer ' + $copilotStudioToken)
+        Accept             = 'application/json'
+        'OData-MaxVersion' = '4.0'
+        'OData-Version'    = '4.0'
+        Prefer             = "odata.maxpagesize=$Top"
+    }
+    $allInteractions += @(Get-CopilotStudioInteractionHistory -EnvironmentUrl $CopilotStudioEnvironmentUrl -Headers $copilotStudioHeaders -PageSize $Top -Filter $CopilotStudioFilter -CreatedDateTimeStart $CreatedDateTimeStart -CreatedDateTimeEnd $CreatedDateTimeEnd -IncludeRawJson:$IncludeRawJson)
 }
 
 if ($allInteractions.Count -eq 0) {
