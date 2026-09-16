@@ -8,7 +8,9 @@ Create a Microsoft Entra app registration with **application** permission `AiEnt
 
 When using `-AllUsers`, also grant **application** permission `User.Read.All` with admin consent. This permission is not needed if you provide explicit user IDs.
 
-The API returns Microsoft 365 Copilot interactions, including prompts and responses. It does **not** return interactions from agents created with Copilot Studio.
+The Microsoft Graph API returns Microsoft 365 Copilot interactions, including prompts and responses. It does **not** return interactions from agents created with Copilot Studio. To include Copilot Studio interactions, use `-IncludeCopilotStudio` with a Dataverse environment URL; the script reads Copilot Studio conversation transcripts from the Dataverse Web API `conversationtranscripts` table and normalizes transcript activities into the same output shape.
+
+For Copilot Studio, the same app registration can be used to request a token for the Dataverse environment, but the app must also be configured as an application user in that Dataverse environment with a role that can read conversation transcripts, such as Bot Transcript Viewer or an equivalent least-privilege custom role. Do not use tenant-specific IDs or secrets in the script.
 
 See Microsoft's endpoint documentation: [getAllEnterpriseInteractions](https://learn.microsoft.com/graph/api/aiinteractionhistory-getallenterpriseinteractions?view=graph-rest-1.0).
 
@@ -17,6 +19,8 @@ See Microsoft's endpoint documentation: [getAllEnterpriseInteractions](https://l
 Use app-only client credentials. Supply values with parameters or the `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, and `AZURE_CLIENT_SECRET` environment variables. Do not put a secret in a script or commit it. For example, set `AZURE_CLIENT_SECRET` in a secure CI secret store or prompt for it at runtime before invoking the script.
 
 An `-AccessToken` can be supplied instead. It takes precedence over client credentials; use it only from a secure source and never log it. The token must be an app-only Graph token containing the approved application permissions.
+
+For Copilot Studio, provide `-CopilotStudioEnvironmentUrl` or set `DATAVERSE_ENVIRONMENT_URL` to the Dataverse environment URL, for example `https://org.crm.dynamics.com`. The script requests a separate Dataverse token for that resource when client credentials are supplied. If you already have a Dataverse access token, pass it with `-CopilotStudioAccessToken` or set `DATAVERSE_ACCESS_TOKEN`.
 
 ## Examples
 
@@ -43,6 +47,18 @@ Enumerate all users (requires `User.Read.All`):
 pwsh -File .\Get-AIInteractions-Rest.ps1 -AllUsers -OutputDirectory ..\exports
 ```
 
+Include Copilot Studio transcripts from Dataverse alongside Microsoft 365 Copilot interactions:
+
+```powershell
+pwsh -File .\Get-AIInteractions-Rest.ps1 -AllUsers -IncludeCopilotStudio -CopilotStudioEnvironmentUrl 'https://org.crm.dynamics.com' -OutputDirectory ..\exports
+```
+
+Export only Copilot Studio interactions without querying Microsoft Graph users:
+
+```powershell
+pwsh -File .\Get-AIInteractions-Rest.ps1 -IncludeCopilotStudio -CopilotStudioEnvironmentUrl 'https://org.crm.dynamics.com' -OutputDirectory ..\exports
+```
+
 Filter by application class and a required closed created-date range:
 
 ```powershell
@@ -50,5 +66,7 @@ pwsh -File .\Get-AIInteractions-Rest.ps1 -UserIds '<user-object-id>' -AppClassFi
 ```
 
 The script uses the stable `v1.0` endpoint by default. Add `-UseBeta` only when beta behavior is specifically required; beta APIs can change. It URL-encodes initial query parameters, requests up to 100 records per page by default, and follows Graph's `@odata.nextLink` unchanged for subsequent pages.
+
+The same created-date range is applied to Copilot Studio as a Dataverse `createdon` filter. You can add a Dataverse OData filter with `-CopilotStudioFilter`; it is combined with the date range when both are provided. Copilot Studio pagination follows Dataverse `@odata.nextLink` values unchanged after the initial request.
 
 Results are normalized and written as `AIInteractions_<timestamp>.csv` and `.json`. Use `-IncludeRawJson` to add each original API object to the export.
