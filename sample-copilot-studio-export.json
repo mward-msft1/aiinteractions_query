@@ -1,0 +1,28 @@
+{
+  "value": [
+    {
+      "UserPrincipalName": "user3@contoso.com",
+      "AgentName": "Support Bot",
+      "SessionId": "session-003",
+      "InteractionId": "cs-005",
+      "UserPrompt": "Help me reset my password",
+      "Answer": "I can help with a password reset. Please verify your identity using the secure reset flow.",
+      "CreatedDateTime": "2026-09-03T09:10:00Z",
+      "InteractionType": "aiRequest",
+      "AppClass": "Agent Builder",
+      "SourceApplication": "Copilot Studio"
+    },
+    {
+      "UserPrincipalName": "user3@contoso.com",
+      "AgentName": "Support Bot",
+      "SessionId": "session-003",
+      "InteractionId": "cs-006",
+      "UserPrompt": "What are the next steps?",
+      "Answer": "Please complete the identity verification step, then you can set a new password.",
+      "CreatedDateTime": "2026-09-03T09:15:00Z",
+      "InteractionType": "aiResponse",
+      "AppClass": "Agent Builder",
+      "SourceApplication": "Copilot Studio"
+    }
+  ]
+}
