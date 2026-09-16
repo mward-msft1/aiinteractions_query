@@ -1,0 +1,5 @@
+UserPrincipalName,AgentName,SessionId,InteractionId,Prompt,Response,CreatedDateTime,InteractionType,AppClass,SourceApplication
+user1@contoso.com,Finance Bot,session-001,cs-001,"What is the status of my invoice?","Your invoice is in review and will be processed by Friday.",2026-09-01T10:00:00Z,aiRequest,Agent Builder,Copilot Studio
+user1@contoso.com,Finance Bot,session-001,cs-002,"Summarize this invoice status.","I reviewed the status: the invoice is in review and expected by Friday.",2026-09-01T10:05:00Z,aiResponse,Agent Builder,Copilot Studio
+user2@contoso.com,HR Assistant,session-002,cs-003,"What is the PTO policy?","The PTO policy is 15 days per year with accrual based on tenure.",2026-09-02T08:30:00Z,aiRequest,Agent Builder,Copilot Studio
+user2@contoso.com,HR Assistant,session-002,cs-004,"Can you summarize the policy?","You accrue 15 days annually, with eligibility increasing after your first year.",2026-09-02T08:35:00Z,aiResponse,Agent Builder,Copilot Studio
