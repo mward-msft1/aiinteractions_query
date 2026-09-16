@@ -101,11 +101,13 @@ function Get-GraphUser {
     $uri = 'https://graph.microsoft.com/v1.0/users?$select=id,userPrincipalName,displayName&$top=999'
     do {
         $response = Invoke-GraphGet -Uri $uri -Headers $Headers
-        foreach ($user in @($response.value)) {
-            [pscustomobject]@{
-                Id                = $user.id
-                UserPrincipalName = $user.userPrincipalName
-                DisplayName       = $user.displayName
+        if ($response.value) {
+            foreach ($user in $response.value) {
+                [pscustomobject]@{
+                    Id                = $user.id
+                    UserPrincipalName = $user.userPrincipalName
+                    DisplayName       = $user.displayName
+                }
             }
         }
         $uri = $response.'@odata.nextLink'
@@ -132,30 +134,32 @@ function Get-AIInteractionHistoryForUser {
 
     do {
         $response = Invoke-GraphGet -Uri $uri -Headers $Headers
-        foreach ($item in @($response.value)) {
-            $content = if ($item.body) { $item.body.content } else { $null }
-            $contentType = if ($item.body) { $item.body.contentType } else { $null }
-            $sourceApplication = if ($item.from -and $item.from.application) { $item.from.application.displayName } else { $null }
-            [pscustomobject]@{
-                UserId                = $User.Id
-                UserPrincipalName     = $User.UserPrincipalName
-                DisplayName           = $User.DisplayName
-                InteractionId         = $item.id
-                SessionId             = $item.sessionId
-                RequestId             = $item.requestId
-                AppClass              = $item.appClass
-                InteractionType       = $item.interactionType
-                ConversationType      = $item.conversationType
-                CreatedDateTime       = $item.createdDateTime
-                Locale                = $item.locale
-                SourceApplication     = $sourceApplication
-                ContentType           = $contentType
-                Content               = $content
-                Contexts              = if ($item.contexts) { $item.contexts | ConvertTo-Json -Depth 10 -Compress } else { $null }
-                Attachments           = if ($item.attachments) { $item.attachments | ConvertTo-Json -Depth 20 -Compress } else { $null }
-                Mentions              = if ($item.mentions) { $item.mentions | ConvertTo-Json -Depth 20 -Compress } else { $null }
-                Links                 = if ($item.links) { $item.links | ConvertTo-Json -Depth 20 -Compress } else { $null }
-                RawJson               = if ($IncludeRawJson) { $item | ConvertTo-Json -Depth 100 -Compress } else { $null }
+        if ($response.value) {
+            foreach ($item in $response.value) {
+                $content = if ($item.body) { $item.body.content } else { $null }
+                $contentType = if ($item.body) { $item.body.contentType } else { $null }
+                $sourceApplication = if ($item.from -and $item.from.application) { $item.from.application.displayName } else { $null }
+                [pscustomobject]@{
+                    UserId                = $User.Id
+                    UserPrincipalName     = $User.UserPrincipalName
+                    DisplayName           = $User.DisplayName
+                    InteractionId         = $item.id
+                    SessionId             = $item.sessionId
+                    RequestId             = $item.requestId
+                    AppClass              = $item.appClass
+                    InteractionType       = $item.interactionType
+                    ConversationType      = $item.conversationType
+                    CreatedDateTime       = $item.createdDateTime
+                    Locale                = $item.locale
+                    SourceApplication     = $sourceApplication
+                    ContentType           = $contentType
+                    Content               = $content
+                    Contexts              = if ($item.contexts) { $item.contexts | ConvertTo-Json -Depth 10 -Compress } else { $null }
+                    Attachments           = if ($item.attachments) { $item.attachments | ConvertTo-Json -Depth 20 -Compress } else { $null }
+                    Mentions              = if ($item.mentions) { $item.mentions | ConvertTo-Json -Depth 20 -Compress } else { $null }
+                    Links                 = if ($item.links) { $item.links | ConvertTo-Json -Depth 20 -Compress } else { $null }
+                    RawJson               = if ($IncludeRawJson) { $item | ConvertTo-Json -Depth 100 -Compress } else { $null }
+                }
             }
         }
         $uri = $response.'@odata.nextLink'
